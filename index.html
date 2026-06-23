@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Q版异想天开炼金沙盒</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #2c3e50;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            user-select: none;
+        }
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 12px 24px;
+            border-radius: 20px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+            display: flex;
+            gap: 15px;
+            z-index: 10;
+        }
+        .element-btn {
+            padding: 10px 18px;
+            font-size: 16px;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.1s;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .element-btn:active { transform: scale(0.95); }
+        .element-btn.active { outline: 3px solid #34495e; transform: scale(1.05); }
+        
+        #canvas-container { width: 100vw; height: 100vh; position: relative; }
+        canvas { display: block; background: linear-gradient(to bottom, #141e30, #243b55); }
+        
+        #recipe-book {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 13px;
+            pointer-events: none;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-container">
+        <button class="element-btn active" style="background:#5dade2;" onclick="selectElement('WATER')">💧 水</button>
+        <button class="element-btn" style="background:#ec7063;" onclick="selectElement('FIRE')">🔥 火</button>
+        <button class="element-btn" style="background:#58d68d;" onclick="selectElement('GRASS')">🌱 草</button>
+        <button class="element-btn" style="background:#a6acaf;" onclick="selectElement('STONE')">🪨 石头</button>
+        <button class="element-btn" style="background:#e74c3c; color:white;" onclick="clearCanvas()">🧹 清空</button>
+    </div>
+
+    <div id="recipe-book">
+        <strong>🧪 Q版隐藏合成配方：</strong><br>
+        💧水 + 🔥火 = 💨蒸汽 (上升)<br>
+        🔥火 + 🌱草 = 💥爆破 (炸飞！)<br>
+        💧水 + 🌱草 = 🍄大头毒菇 (蹦跳)<br>
+        🔥火 + 🪨石头 = 🌋岩浆 (粘稠)<br>
+        🌋岩浆 + 💧水 = 💎钻石 (闪烁)<br>
+        💎钻石 + 🍄大头毒菇 = 👾外星小怪物!
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="sandboxCanvas"></canvas>
+    </div>
+
+<script>
+const canvas = document.getElementById('sandboxCanvas');
+const ctx = canvas.getContext('2d');
+
+// 适配屏幕大小
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+let currentElement = 'WATER';
+let particles = [];
+let isDrawing = false;
+
+// 元素属性配置 (Q版风格：体积大一些，带有圆滚滚的外观)
+const ELEMENT_TYPES = {
+    WATER:  { color: '#3498db', radius: 10, gravity: 0.4, bounce: 0.3, label: '💧' },
+    FIRE:   { color: '#e74c3c', radius: 9,  gravity: -0.1, bounce: 0.5, label: '🔥' }, // 火往上飘
+    GRASS:  { color: '#2ecc71', radius: 12, gravity: 0.5, bounce: 0.1, label: '🌱' },
+    STONE:  { color: '#7f8c8d', radius: 15, gravity: 0.8, bounce: 0.1, label: '🪨' },
+    // 合成产物
+    STEAM:  { color: '#ebf5fb', radius: 14, gravity: -0.3, bounce: 0.6, label: '💨' },
+    MUSHROOM:{ color: '#9b59b6', radius: 18, gravity: 0.4, bounce: 0.8, label: '🍄' }, // 超弹
+    MAGMA:  { color: '#d35400', radius: 11, gravity: 0.2, bounce: 0.05, label: '🌋' }, // 粘稠
+    DIAMOND:{ color: '#5dade2', radius: 13, gravity: 0.6, bounce: 0.4, label: '💎' },
+    MONSTER:{ color: '#1abc9c', radius: 22, gravity: 0.3, bounce: 0.7, label: '👾' }
+};
+
+class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type;
+        this.config = ELEMENT_TYPES[type];
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4;
+        this.radius = this.config.radius;
+        this.toRemove = false;
+        this.wobble = Math.random() * 100; // 让Q版小表情有动态扭动感
+    }
+
+    update() {
+        this.vy += this.config.gravity;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.wobble += 0.05;
+
+        // 蒸汽生命周期
+        if (this.type === 'STEAM' && this.y < -20) this.toRemove = true;
+
+        // 边界碰撞
+        if (this.x - this.radius < 0) { this.x = this.radius; this.vx *= -this.config.bounce; }
+        if (this.x + this.radius > canvas.width) { this.x = canvas.width - this.radius; this.vx *= -this.config.bounce; }
+        if (this.y - this.radius < 0 && this.config.gravity < 0) { this.vy *= -this.config.bounce; } // 针对上升元素
+        if (this.y + this.radius > canvas.height) {
+            this.y = canvas.height - this.radius;
+            this.vy *= -this.config.bounce;
+            this.vx *= 0.8; // 地面摩擦力
+        }
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        
+        // Q版果冻晃动效果
+        if (this.type === 'MUSHROOM' || this.type === 'MONSTER') {
+            ctx.scale(1 + Math.sin(this.wobble)*0.05, 1 + Math.cos(this.wobble)*0.05);
+        }
+
+        // 画主体圆形
+        ctx.beginPath();
+        ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.config.color;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.stroke();
+
+        // 绘制Emoji/小表情
+        ctx.font = `${this.radius * 1.2}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.config.label, 0, 0);
+
+        // 给外星怪物加个可爱的眨眼
+        if (this.type === 'MONSTER') {
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 10px Arial';
+            let eye = Math.sin(this.wobble) > 0.8 ? '＞.＜' : '●.●';
+            ctx.fillText(eye, 0, 2);
+        }
+
+        ctx.restore();
+    }
+}
+
+// 核心：碰撞检测与元素合成逻辑
+function checkReactions() {
+    for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+            let p1 = particles[i];
+            let p2 = particles[j];
+            if (p1.toRemove || p2.toRemove) continue;
+
+            let dx = p2.x - p1.x;
+            let dy = p2.y - p1.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            let minDist = p1.radius + p2.radius;
+
+            if (dist < minDist) {
+                // 1. 基础物理推开弹性碰撞
+                let overlap = minDist - dist;
+                let nx = dx / dist;
+                let ny = dy / dist;
+                p1.x -= nx * overlap * 0.5;
+                p1.y -= ny * overlap * 0.5;
+                p2.x += nx * overlap * 0.5;
+                p2.y += ny * overlap * 0.5;
+
+                // 交换速度
+                let kx = p1.vx - p2.vx;
+                let ky = p1.vy - p2.vy;
+                p1.vx -= kx * 0.5; p1.vy -= ky * 0.5;
+                p2.vx += kx * 0.5; p2.vy += ky * 0.5;
+
+                // 2. 炼金术合成公式判断
+                let pair = [p1.type, p2.type].sort().join('+');
+                let spawnX = (p1.x + p2.x) / 2;
+                let spawnY = (p1.y + p2.y) / 2;
+
+                if (pair === 'FIRE+WATER') { // 水 + 火 = 蒸汽
+                    p1.toRemove = true; p2.toRemove = true;
+                    createReactionProduct(spawnX, spawnY, 'STEAM', 2);
+                } 
+                else if (pair === 'FIRE+GRASS') { // 火 + 草 = 爆炸
+                    p1.toRemove = true; p2.toRemove = true;
+                    triggerExplosion(spawnX, spawnY);
+                } 
+                else if (pair === 'GRASS+WATER') { // 水 + 草 = 蘑菇
+                    p1.toRemove = true; p2.toRemove = true;
+                    createReactionProduct(spawnX, spawnY, 'MUSHROOM', 1);
+                } 
+                else if (pair === 'FIRE+STONE') { // 火 + 石 = 岩浆
+                    p1.toRemove = true; p2.toRemove = true;
+                    createReactionProduct(spawnX, spawnY, 'MAGMA', 2);
+                } 
+                else if (pair === 'MAGMA+WATER') { // 岩浆 + 水 = 钻石
+                    p1.toRemove = true; p2.toRemove = true;
+                    createReactionProduct(spawnX, spawnY, 'DIAMOND', 1);
+                }
+                else if (pair === 'DIAMOND+MUSHROOM') { // 钻石 + 蘑菇 = 外星怪物！
+                    p1.toRemove = true; p2.toRemove = true;
+                    createReactionProduct(spawnX, spawnY, 'MONSTER', 1);
+                }
+            }
+        }
+    }
+    // 过滤掉被合成消耗的粒子
+    particles = particles.filter(p => !p.toRemove);
+}
+
+function createReactionProduct(x, y, type, count) {
+    for(let c=0; c<count; c++) {
+        particles.push(new Particle(x + (Math.random()-0.5)*10, y + (Math.random()-0.5)*10, type));
+    }
+}
+
+// 爆炸效果：把周围的粒子全炸飞
+function triggerExplosion(x, y) {
+    particles.forEach(p => {
+        let dx = p.x - x;
+        let dy = p.y - y;
+        let dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 150) {
+            let force = (150 - dist) / 10;
+            p.vx += (dx / dist) * force;
+            p.vy += (dy / dist) * force - 2; // 顺便往上炸
+        }
+    });
+    // 绘制一个短暂的爆炸视觉圈（在游戏循环中通过清屏掩盖，这里做简易处理）
+    ctx.beginPath();
+    ctx.arc(x, y, 40, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255, 165, 0, 0.6)';
+    ctx.fill();
+}
+
+// 游戏主循环
+function loop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    checkReactions();
+
+    particles.forEach(p => {
+        p.update();
+        p.draw();
+    });
+
+    // 限制最大粒子数防止卡死
+    if (particles.length > 300) particles.shift();
+
+    requestAnimationFrame(loop);
+}
+loop();
+
+// 鼠标/触摸交互控制
+function addParticles(e) {
+    let clientX = e.clientX || (e.touches && e.touches[0].clientX);
+    let clientY = e.clientY || (e.touches && e.touches[0].clientY);
+    if(!clientX) return;
+
+    // 每次生成一点点偏离，营造喷泉效果
+    for(let i=0; i<2; i++) {
+        particles.push(new Particle(
+            clientX + (Math.random() - 0.5) * 15,
+            clientY + (Math.random() - 0.5) * 15,
+            currentElement
+        ));
+    }
+}
+
+window.addEventListener('mousedown', (e) => { if(e.clientY > 100) { isDrawing = true; addParticles(e); } });
+window.addEventListener('mousemove', (e) => { if (isDrawing) addParticles(e); });
+window.addEventListener('mouseup', () => isDrawing = false);
+
+window.addEventListener('touchstart', (e) => { if(e.touches[0].clientY > 100) { isDrawing = true; addParticles(e); } });
+window.addEventListener('touchmove', (e) => { if (isDrawing) addParticles(e); });
+window.addEventListener('touchend', () => isDrawing = false);
+
+// UI 交互函数
+function selectElement(type) {
+    currentElement = type;
+    document.querySelectorAll('.element-btn').forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+}
+
+function clearCanvas() {
+    particles = [];
+}
+</script>
+
+</body>
+</html>
